@@ -21,7 +21,22 @@ which reboots D1. For a z88dk program, link with:
 
 ## Building
 
-    make adam
+    make adam    # r2r/adam/adam-menu.ddp
+    make dist    # dist/adam-menu-<version>.zip
 
-`FUJINET_LIB` in the Makefile fetches and builds fujinet-lib-experimental.
-Output is `r2r/adam/adam-menu.ddp`.
+`FUJINET_LIB` in the Makefile clones and builds fujinet-lib.
+Each [release](https://github.com/RichStephens/adam-menu/releases) carries
+`adam-menu.ddp`.
+
+## Releasing
+
+1. Rename `[Unreleased]` in `Changelog.md` to the new version and date, and
+   start an empty `[Unreleased]` above it.
+2. Commit and push to `main`.
+3. Tag and push the tag:
+
+       git tag v1.2.3
+       git push origin v1.2.3
+
+The release workflow builds the zip and publishes it with that changelog
+section as the notes. It fails if the newest section does not match the tag.

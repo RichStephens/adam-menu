@@ -5,6 +5,7 @@
 build/
 _cache/
 r2r/
+dist/
 
 .DS_Store
 
