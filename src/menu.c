@@ -15,8 +15,16 @@
 #define MENU_SLOT     0
 #define RUN_SLOT      3
 #define RUN_DEV       (RUN_SLOT + 4)
+#define FUJI_DEV      0x0F
 #define MODE_READ     1
 #define INVALID_HOST  0xFF
+
+#define DCB_DONE      0x80
+// Low nibble of a disk's status; EOS boots only a disk below this
+#define NO_MEDIA      3
+#define WAIT_TRIES    400
+#define READ_TRIES    20
+#define BLOCK_LEN     1024
 
 #define MAX_ENTRIES   60
 #define NAME_LEN      32
@@ -44,8 +52,10 @@ static char entry[ENTRY_LEN];
 static char names[MAX_ENTRIES][NAME_LEN];
 static char self[MAX_FILENAME_LEN];
 static char line[LINE_LEN + 1];
+static uint8_t probe[BLOCK_LEN];
 static uint8_t host;
 static uint8_t count;
+static uint8_t err;
 
 static bool is_ddp(const char *name, size_t len)
 {
@@ -109,9 +119,38 @@ static bool read_dir(void)
   return true;
 }
 
+// The status request EOS makes before it boots a disk
+static bool wait_ready(uint8_t dev, bool media)
+{
+  DCB *dcb = eos_find_dcb(dev);
+  uint16_t tries;
+
+  err = 0;
+  if (!dcb)
+    return false;
+  for (tries = 0; tries < WAIT_TRIES; tries++) {
+    err = eos_request_device_status(dev, dcb);
+    if (err == DCB_DONE && (!media || (dcb->dev_status & 0x0F) < NO_MEDIA))
+      return true;
+  }
+  return false;
+}
+
+// Boot retries block 0 until it reads; one ReadBlock gives up after two tries
+static bool read_block(uint32_t block, void *buf)
+{
+  uint8_t tries;
+
+  for (tries = 0; tries < READ_TRIES; tries++)
+    if ((err = eos_read_block(RUN_DEV, block, buf)) == DCB_DONE)
+      return true;
+  return false;
+}
+
 static bool launch(const char *name)
 {
-  fuji_unmount_disk_image(RUN_SLOT);
+  // No unmount: it takes D4 off AdamNet until the remount
+  err = 0;
 
   // The Adam SET DEVICE FULLPATH keeps the slot's old host and mode
   slots[RUN_SLOT].hostSlot = host;
@@ -127,9 +166,9 @@ static bool launch(const char *name)
       || !fuji_mount_disk_image(RUN_SLOT, MODE_READ))
     return false;
 
-  // ReadBlock leaves the DCB status ($80) in A on success
-  if (!eos_find_dcb(RUN_DEV)
-      || eos_read_block(RUN_DEV, 0, BOOT_BLOCK) == EOS_ERR_DEVICE_DEPD)
+  // Block 1 too, so the loader's unchecked reads start on a drive that answers
+  if (!wait_ready(FUJI_DEV, false) || !wait_ready(RUN_DEV, true)
+      || !read_block(0, BOOT_BLOCK) || !read_block(1, probe))
     return false;
 
   // The loader overwrites the NMI vector at $0066
@@ -232,7 +271,9 @@ int main(void)
     pick = choose();
     gotoxy(0, MSG_ROW);
     printf("Booting %s", names[pick]);
-    if (!launch(names[pick]))
-      wait_key("Could not boot it");
+    if (!launch(names[pick])) {
+      sprintf(line, "Could not boot it ($%02X)", err);
+      wait_key(line);
+    }
   }
 }
